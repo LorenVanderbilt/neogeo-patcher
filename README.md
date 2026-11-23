@@ -16,7 +16,9 @@ with a README. Everything happens in your browser: your files are never uploaded
 - `games/<id>/patchdata.js` is one release's data: checksums, patch bytes, Darksoft layout, packages and install
   steps. Each game's `tools/release.py` writes it, with `--publish`; don't edit it.
 - `tools/ngpatcher.py` is what each game's `release.py` imports (this repo sits next to theirs): it wraps the
-  data, writes it here, and makes a copy of the page for one game alone (itch.io's HTML upload, offline use).
+  data, writes it here, and makes a copy of the page for one game alone (a release's patcher/, to try before publishing).
+- The download kit (`<name>_patch_kit.zip` from each release.py, made by `ngpatcher.kit`): the patcher as one
+  offline HTML file, a README for players, and "patch by hand/" with each file's patch and the checksums.
 - `tools/convert_old.js` converted the two Beta 1 releases, made before this repo existed. Not needed again.
 
 ## Testing

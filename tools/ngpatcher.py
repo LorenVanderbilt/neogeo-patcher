@@ -3,8 +3,9 @@
     sys.path.insert(0, os.path.join(ROOT, "..", "neogeo-patcher", "tools"))
     import ngpatcher
     js = ngpatcher.patchdata_js("bjplus", data)        # data: release.py's dict (version, order, source, ...)
-    ngpatcher.page_copy("bjplus", js, out_dir)          # a copy of the page for that game alone (itch.io, offline)
+    ngpatcher.page_copy("bjplus", js, out_dir)          # a copy of the page for that game alone
     ngpatcher.publish("bjplus", js)                     # games/bjplus/patchdata.js here, for the live page
+    files = ngpatcher.kit("bjplus", js, version, packages, by_hand)   # the download kit: {path: bytes}
 
 The data's format is the engine's (patcher.js); this file only wraps and places it, so every game writes it alike.
 """
@@ -12,6 +13,8 @@ import json
 import os
 import re
 import shutil
+import subprocess
+import textwrap
 
 PATCHER = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PAGE_FILES = ["index.html", "patcher.js", "games.js"]
@@ -37,8 +40,8 @@ def publish(game_id, js):
 
 
 def page_copy(game_id, js, dest):
-    """dest/: the page for this game alone (its data loaded up front, so it needs no ?game=), as itch.io's HTML
-    upload wants it (index.html at the root) and as it works opened from a file."""
+    """dest/: the page for this game alone (its data loaded up front, so it needs no ?game=), for trying a
+    release before publishing it (it works opened from a file)."""
     _known(game_id)
     os.makedirs(os.path.join(dest, "games", game_id), exist_ok=True)
     for n in PAGE_FILES:
@@ -49,6 +52,88 @@ def page_copy(game_id, js, dest):
     assert page.count(tag) == 1, "index.html: the games.js script tag isn't there once"
     page = page.replace(tag, '<script src="games/%s/patchdata.js"></script>\n%s' % (game_id, tag))
     open(os.path.join(dest, "index.html"), "w").write(page)
+
+
+def game_info(game_id):
+    """The game's entry in games.js, as a dict (read with Node, as the page reads it)."""
+    _known(game_id)
+    out = subprocess.run(["node", "-e", "var g = require(process.argv[1]).filter(function (g) { return g.id === "
+                          "process.argv[2]; })[0]; process.stdout.write(JSON.stringify(g));",
+                          os.path.join(PATCHER, "games.js"), game_id], capture_output=True, text=True, check=True)
+    return json.loads(out.stdout)
+
+
+def single_file(game_id, js):
+    """The page for this game alone as one HTML file, every script inside it: the download kit's offline patcher."""
+    page = open(os.path.join(PATCHER, "index.html")).read()
+    scripts = {"games.js": js + open(os.path.join(PATCHER, "games.js")).read(),
+               "patcher.js": open(os.path.join(PATCHER, "patcher.js")).read()}
+    for name, text in scripts.items():
+        tag = '<script src="%s"></script>' % name
+        assert page.count(tag) == 1, "index.html: the %s script tag isn't there once" % name
+        page = page.replace(tag, "<script>\n%s</script>" % text.replace("</script", "<\\/script"))
+    return page
+
+
+def kit(game_id, js, version, packages, by_hand):
+    """The download kit, {path: bytes}: the offline patcher, a README for players, and by_hand ({path: bytes or
+    str}: the game's own patches, their README and checksums) in "patch by hand/"."""
+    g = game_info(game_id)
+    page = "https://lorenvanderbilt.github.io/neogeo-patcher/?game=" + game_id
+    html = "%s Patcher.html" % g["name"]
+    systems = ["  %-18s %s" % (p["label"], p["note"]) for p in packages]
+    lines = [
+        "%s - %s" % (g["name"], version), "=" * 70, "",
+    ] + textwrap.wrap(g["blurb"], 100) + [
+        "Free. You need your own copy of the original game: this download holds no game data.", "",
+        "THE EASY WAY", "",
+        "  1. Open \"%s\" (it's in this folder) in Chrome, Edge, Firefox or Safari." % html,
+        "     It works offline. The same patcher is online too: " + page,
+        "  2. Drop in your %s.zip (the MAME set), or your Darksoft-style %s folder." % (g["set"], g["set"]),
+        "  3. Pick what you play on and click Download. You get a zip made for that system, with a README that",
+        "     says where each file goes.",
+        "  The patching happens on your computer: nothing is uploaded.", "",
+        "WHAT YOU NEED", "",
+        "  The MAME ROM set \"%s\" (%s)." % (g["set"], g["setLong"]),
+        "  The patcher checks each file and tells you if one is missing or from a different version.", "",
+        "WHAT YOU CAN PLAY IT ON", "",
+    ] + systems + [
+        "",
+        "PATCHING BY HAND", "",
+        "  If you'd rather use your own tools, the \"patch by hand\" folder has a patch for each file, the",
+        "  checksums your files should have, and how to do it for each system.", "",
+        "COMMON QUESTIONS", "",
+    ]
+    faq = [
+        ("The patcher says some files are from a different version.",
+         "This patch only fits the MAME set \"%s\". Copies of the game from other places (a different MAME"
+         " version, a Neo Geo CD image, a re-release's files) are different files and won't match. The"
+         " patcher marks each file that doesn't." % g["set"]),
+        ("It says some files are missing.",
+         "Drop in the whole %s.zip, or every file of the folder at once, not just some of them." % g["set"]),
+        ("I clicked Download and nothing came.",
+         "Check whether your browser is asking to allow the download, or has blocked it (look by the address bar"
+         " or in its list of downloads). If that's not it, try another browser: Chrome, Edge, Firefox or Safari."),
+        ("Which system should I pick?",
+         "The one you'll play on. You can come back and download for another system at any time."),
+        ("Where do the files go? (the .xml for MAME, the .dat for RetroArch, ...)",
+         "The zip you download has its own README.txt: it lists every file, where it goes and how to start the"
+         " game, with what to try if it doesn't work."),
+        ("There's a new version. What do I patch?",
+         "Your original %s.zip again, with the new version's patcher, not the files you patched before." % g["set"]),
+        ("Can I share the patched files?",
+         "Please don't: they contain the original game. Share this download or the patcher's page instead."),
+    ]
+    for q, a in faq:
+        lines += ["  " + q] + textwrap.wrap(a, 100, initial_indent="    ", subsequent_indent="    ") + [""]
+    lines += [
+        "HELP AND NEWS", "",
+        "  Questions, problems or a bug to report: " + g["page"], "",
+    ] + textwrap.wrap(g["credit"] + " Not affiliated with or endorsed by the original game's makers.", 100) + [""]
+    out = {"README.txt": "\n".join(lines).encode(), html: single_file(game_id, js).encode()}
+    for path, data in by_hand.items():
+        out["patch by hand/" + path] = data.encode() if isinstance(data, str) else data
+    return out
 
 
 def _known(game_id):
